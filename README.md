@@ -3,6 +3,10 @@ OMG Monitor
 
 This program uses [NuPIC] to catch anomalies in [Pingdom] monitored response times. It runs as a [Docker] container, so to use it you just have to run the container (see [Usage](#usage)).
 
+Here is a simplified flowchart of the project:
+
+![flowchart](https://rawgithub.com/cloudwalkio/omg-monitor/images/images/omg-monitor-flow.svg)
+
 Input
 -----
 
