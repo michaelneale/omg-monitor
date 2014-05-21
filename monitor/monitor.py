@@ -34,6 +34,7 @@ import model_params_monitor # file containing CLA parameters
 
 import redis
 from utils import pingdom # Pingdom API wrapper
+from utils import anomaly_likelihood
 
 _UTC_OFFSET = 10800 # Time zone offset (-3:00 GMT for Sao Paulo/Brazil)
 _TIMEOUT = 60000 # Default response time when status is not 'up' (ms)
@@ -66,6 +67,10 @@ def run(check_id, check_name, username, password, appkey):
     # The shifter is used to bring the predictions to the actual time frame
     shifter = InferenceShifter()
 
+    
+    # The anomaly likelihood object
+    anomalyLikelihood = anomaly_likelihood.AnomalyLikelihood()
+
     model = create_model() # Create the CLA model
 
     model.enableInference({'predictedField': 'responsetime'})
@@ -84,8 +89,9 @@ def run(check_id, check_name, username, password, appkey):
     while i < 6:
         try:
             pingdomResult = ping.method('results/%d/' % check_id, method='GET', parameters={'limit': 1000, 'offset': i*1000})
-        except Exception:
+        except Exception, e:
             print "[%s] Could not get Pingdom results." % check_name
+            print e
             sleep(_SECONDS_PER_REQUEST)
             continue
         for result in pingdomResult['results']:
@@ -108,6 +114,11 @@ def run(check_id, check_name, username, password, appkey):
         result = shifter.shift(result)
         # Save multi step predictions 
         inference = result.inferences['multiStepPredictions']
+        # Take the anomaly_score
+        anomaly_score = result.inferences['anomalyScore']
+        # Compute the Anomaly Likelihood
+        likelihood = anomalyLikelihood.anomalyProbability(
+            modelInput['responsetime'], anomaly_score, modelInput['time'])
        
         print("[%s] Processing: %s") % (check_name, strftime("%Y-%m-%d %H:%M:%S", gmtime(servertime  - _UTC_OFFSET)))
         sys.stdout.flush()
@@ -115,9 +126,10 @@ def run(check_id, check_name, username, password, appkey):
         if inference[1]:
             try:
                 # Save in redis with key = 'results:check_id' and value = 'time, status, actual, prediction, anomaly'
-                _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.2f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],result.inferences['anomalyScore']))
-            except Exception:
+                _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.4f,%.4f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],anomaly_score, likelihood))
+            except Exception, e:
                 print "[%s] Could not write results to redis." % check_name
+                print e
                 sys.stdout.flush()
                 continue
 
@@ -129,13 +141,14 @@ def run(check_id, check_name, username, password, appkey):
         # Call Pingdom for the last 5 results for check_id
         try:
             pingdomResults = ping.method('results/%d/' % check_id, method='GET', parameters={'limit': 5})['results']
-        except Exception:
+        except Exception, e:
             print "[%s][online] Could not get Pingdom results." % check_name
+            print e
             sleep(_SECONDS_PER_REQUEST)
             continue
         
         # If any result contains new responses (ahead of [servetime]) process it. 
-        # We check the last 5 results, so that we don't lose data points.
+        # We check the last 5 results, so that we don't many lose data points.
         for modelInput in [pingdomResults[4], pingdomResults[3], pingdomResults[2], pingdomResults[1], pingdomResults[0]]:
             if servertime < int(modelInput['time']):
                 # Update servertime
@@ -147,10 +160,18 @@ def run(check_id, check_name, username, password, appkey):
                     modelInput['responsetime'] = _TIMEOUT
 
                 modelInput['responsetime'] = int(modelInput['responsetime'])
-                # Run the model
+
+                # Pass the input to the model
                 result = model.run(modelInput)
+                # Shift results
                 result = shifter.shift(result)
+                # Save multi step predictions 
                 inference = result.inferences['multiStepPredictions']
+                # Take the anomaly_score
+                anomaly_score = result.inferences['anomalyScore']
+                # Compute the Anomaly Likelihood
+                likelihood = anomalyLikelihood.anomalyProbability(
+                    modelInput['responsetime'], anomaly_score, modelInput['time'])
                 
                 print("[%s][online] Processing: %s") % (check_name, strftime("%Y-%m-%d %H:%M:%S", gmtime(servertime - _UTC_OFFSET)))
                 sys.stdout.flush()
@@ -158,9 +179,10 @@ def run(check_id, check_name, username, password, appkey):
                 if inference[1]:
                     try:
                         # Save in redis with key = 'results:check_id' and value = 'time, status, actual, prediction, anomaly'
-                        _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.2f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],result.inferences['anomalyScore']))
-                    except Exception:
+                        _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.4f,%.4f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],anomaly_score, likelihood))
+                    except Exception, e:
                         print "[%s] Could not write results to redis." % check_name
+                        print e
                         sys.stdout.flush()
                         continue
         # Wait until next request
