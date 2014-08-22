@@ -63,8 +63,8 @@ def create_model():
     """ Create the CLA model """
     return ModelFactory.create(model_params_monitor.MODEL_PARAMS)
 
-def run(check_id, check_name, username, password, appkey):
-    """ Main loop, responsible for initial and online training """
+def run(check_id, check_name, check_url):
+    """ Main loop, responsible for online training """
 
     # Setup logging
     logger = logging.getLogger(__name__)
@@ -78,9 +78,6 @@ def run(check_id, check_name, username, password, appkey):
     handler.setLevel(logging.INFO)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
-
-    # Pingdom instance
-    ping = pingdom.Pingdom(username=username, password=password, appkey=appkey)
 
     # The shifter is used to bring the predictions to the actual time frame
     shifter = InferenceShifter()
@@ -98,133 +95,55 @@ def run(check_id, check_name, username, password, appkey):
     # Deque to keep history of response time input for smoothing
     history = deque([0.0] * MAVG_WINDOW, maxlen=MAVG_WINDOW)
 
-    logger.info("[%s] Getting last 5000 results" % check_name)
-    
-    # Get past resuts for check
-    results = deque()
-    i = 0
-    while i < 6:
-        try:
-            pingdomResult = ping.method('results/%d/' % check_id, method='GET', parameters={'limit': 1000, 'offset': i*1000})
-        except Exception, e:
-            logger.warn("[%s] Could not get Pingdom results." % check_name)
-            continue
-        for result in pingdomResult['results']:
-            results.appendleft(result)
-        i = i + 1
-
-    servertime = None 
-    for modelInput in results:
-        # If dont' have response time is because it's not up, so set it to a large number
-        if 'responsetime' not in modelInput:
-            modelInput['responsetime'] = _TIMEOUT
-
-        history.appendleft(int(modelInput['responsetime']))
-        modelInput['responsetime'] = moving_average(history)
-
-        servertime  = int(modelInput['time'])
-        modelInput['time'] = datetime.utcfromtimestamp(servertime)
-
-        # Pass the input to the model
-        result = model.run(modelInput)
-        # Shift results
-        result = shifter.shift(result)
-        # Save multi step predictions 
-        inference = result.inferences['multiStepPredictions']
-        # Take the anomaly_score
-        anomaly_score = result.inferences['anomalyScore']
-        # Compute the Anomaly Likelihood
-        likelihood = anomalyLikelihood.anomalyProbability(
-            modelInput['responsetime'], anomaly_score, modelInput['time'])
-       
-        logger.info("[%s] Processing: %s" % (check_name, strftime("%Y-%m-%d %H:%M:%S", gmtime(servertime))))
-    
-        if inference[1]:
-            try:
-                # Save in redis with key = 'results:check_id' and value = 'time, status, actual, prediction, anomaly'
-                _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.5f,%.5f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],anomaly_score, likelihood))
-            except Exception, e:
-                logger.warn("[%s] Could not write results to redis." % check_name)
-                continue
 
     logger.info("[%s] Let's start learning online..." % check_name)
 
-    # Main loop
-    try:  
-        while True:
-            # Call Pingdom for the last 5 results for check_id
-            try:
-                pingdomResults = ping.method('results/%d/' % check_id, method='GET', parameters={'limit': 5})['results']
-            except Exception, e:
-                logger.warn("[%s][online] Could not get Pingdom results." % check_name, exc_info=True)
-                sleep(_SECONDS_PER_REQUEST)
-                continue
-            
-            # If any result contains new responses (ahead of [servetime]) process it. 
-            # We check the last 5 results, so that we don't many lose data points.
-            for modelInput in [pingdomResults[4], pingdomResults[3], pingdomResults[2], pingdomResults[1], pingdomResults[0]]:
-                if servertime < int(modelInput['time']):
-                    # Update servertime
-                    servertime  = int(modelInput['time'])
-                    modelInput['time'] = datetime.utcfromtimestamp(servertime)
-
-                    # If not have response time is because it's not up, so set it to a large number
-                    if 'responsetime' not in modelInput:
-                        modelInput['responsetime'] = _TIMEOUT
-
-                    history.appendleft(int(modelInput['responsetime']))
-                    modelInput['responsetime'] = moving_average(history)
-
-                    # Pass the input to the model
-                    result = model.run(modelInput)
-                    # Shift results
-                    result = shifter.shift(result)
-                    # Save multi step predictions 
-                    inference = result.inferences['multiStepPredictions']
-                    # Take the anomaly_score
-                    anomaly_score = result.inferences['anomalyScore']
-                    # Compute the Anomaly Likelihood
-                    likelihood = anomalyLikelihood.anomalyProbability(
-                        modelInput['responsetime'], anomaly_score, modelInput['time'])
-                    
-                    logger.info("[%s][online] Processing: %s" % (check_name, strftime("%Y-%m-%d %H:%M:%S", gmtime(servertime))))
-
-                    if inference[1]:
-                        try:
-                            # Save in redis with key = 'results:check_id' and value = 'time, status, actual, prediction, anomaly'
-                            _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.5f,%.5f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],anomaly_score, likelihood))
-                        except Exception, e:
-                            logger.warn("[%s] Could not write results to redis." % check_name, exc_info=True)
-                            continue
-                    else:
-                            logger.warn("[%s] Don't have inference[1]: %s." % (check_name, inference))
-            # Wait until next request
-            sleep(_SECONDS_PER_REQUEST)
-    except Exception, e:
-        logger.warn("[%s] Out of main loop." % check_name, exc_info=True)
-        sys.exit(0)
-
-if __name__ == "__main__":
-    if(len(sys.argv) <= 4):
-        print "Usage: monitor.py [username] [password] [appkey] [CHECK_ID]"
-        sys.exit(0)
-
-    # If 4 arguments passed, set check_id
-    if(len(sys.argv) == 5):
-        username = sys.argv[1]
-        password = sys.argv[2]
-        appkey = sys.argv[3]
-        check_id = int(sys.argv[4])
-        check_name = str(check_id)
-
-    # If 5 argumentw passed, set check_id and check_name
-    if(len(sys.argv) == 6):
-        username = sys.argv[1]
-        password = sys.argv[2]
-        appkey = sys.argv[3]
-        check_id = int(sys.argv[4])
-        check_name = sys.argv[5]
+    import time
 
     
-    # Run the monitor
-    run(check_id, check_name, username, password, appkey)
+
+    servertime = None 
+
+    while True:        
+        modelInput = {'time': int(time.time()), 'responsetime': 420, 'status': 'OK'}            
+        # If any result contains new responses (ahead of [servetime]) process it. 
+        # We check the last 5 results, so that we don't many lose data points.
+        if servertime < int(modelInput['time']):
+            # Update servertime
+            servertime = int(modelInput['time'])
+            modelInput['time'] = datetime.utcfromtimestamp(servertime)
+
+            # If not have response time is because it's not up, so set it to a large number
+            if 'responsetime' not in modelInput:
+                modelInput['responsetime'] = _TIMEOUT
+
+            history.appendleft(int(modelInput['responsetime']))
+            modelInput['responsetime'] = moving_average(history)
+
+            # Pass the input to the model
+            result = model.run(modelInput)
+            # Shift results
+            result = shifter.shift(result)
+            # Save multi step predictions 
+            inference = result.inferences['multiStepPredictions']
+            # Take the anomaly_score
+            anomaly_score = result.inferences['anomalyScore']
+            # Compute the Anomaly Likelihood
+            likelihood = anomalyLikelihood.anomalyProbability(
+                modelInput['responsetime'], anomaly_score, modelInput['time'])
+            
+            logger.info("[%s][online] Processing: %s" % (check_name, strftime("%Y-%m-%d %H:%M:%S", gmtime(servertime))))
+
+            if inference[1]:
+                try:
+                    # Save in redis with key = 'results:check_id' and value = 'time, status, actual, prediction, anomaly'
+                    _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.5f,%.5f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],anomaly_score, likelihood))
+                except Exception, e:
+                    logger.warn("[%s] Could not write results to redis." % check_name, exc_info=True)
+                    continue
+            else:
+                    logger.warn("[%s] Don't have inference[1]: %s." % (check_name, inference))
+
+            sleep(1)        
+            
+

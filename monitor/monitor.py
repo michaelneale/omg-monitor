@@ -191,6 +191,7 @@ def run(check_id, check_name, username, password, appkey):
 
                     if inference[1]:
                         try:
+                            logger.info(result.rawInput['responsetime'])
                             # Save in redis with key = 'results:check_id' and value = 'time, status, actual, prediction, anomaly'
                             _REDIS_SERVER.rpush('results:%d' % check_id, '%s,%s,%d,%d,%.5f,%.5f' % (servertime,modelInput['status'],result.rawInput['responsetime'],result.inferences['multiStepBestPredictions'][1],anomaly_score, likelihood))
                         except Exception, e:

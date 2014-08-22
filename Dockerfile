@@ -29,6 +29,7 @@ RUN \
 
 # Copy omg-monitor directory
 ADD start.py /home/docker/omg-monitor/start.py
+ADD start_metrics.py /home/docker/omg-monitor/start_metrics.py
 ADD startup.sh /home/docker/omg-monitor/startup.sh
 ADD utils/ /home/docker/omg-monitor/utils
 ADD monitor/ /home/docker/omg-monitor/monitor
