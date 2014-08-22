@@ -27,6 +27,9 @@ RUN \
     go get github.com/garyburd/redigo/redis;
 #RUN
 
+
+RUN apt-get install -y tmux
+
 # Copy omg-monitor directory
 ADD start.py /home/docker/omg-monitor/start.py
 ADD start_metrics.py /home/docker/omg-monitor/start_metrics.py
@@ -48,4 +51,7 @@ ENV LOG_DIR /var/log/docker/monitor
 
 WORKDIR /home/docker/omg-monitor/
 
-ENTRYPOINT ["./startup.sh"]
+
+
+#ENTRYPOINT ["./startup.sh"]
+CMD /bin/bash

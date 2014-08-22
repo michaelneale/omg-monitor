@@ -9,6 +9,7 @@ from monitor import metrics_monitor
 from utils import pingdom # Pingdom API wrapper
 import redis
 import os
+from time import sleep
 
 # Connect to redis server
 _REDIS_SERVER = redis.Redis("localhost")
@@ -39,12 +40,27 @@ except redis.ConnectionError:
 if __name__ == "__main__":
 
     # get just the checks
-    checks = [{'id': 123, 'name': 'mic', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'}]
+    checks = [{'id': 123, 'name': 'mic', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 234, 'name': 'mic2', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 235, 'name': 'mic3', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 236, 'name': 'mic4', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 237, 'name': 'mic5', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 238, 'name': 'mic3', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 239, 'name': 'mic4', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 7239, 'name': 'mic4', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 6239, 'name': 'mic4', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'},
+                {'id': 8239, 'name': 'mic4', 'url': 'https://gist.githubusercontent.com/michaelneale/15619020aa2270c74607/raw/dabd6754a0aa56d633245a94163b0918230afd2f/gistfile1.json'}]
 
     # flush redis db and write the checks in it
     _REDIS_SERVER.flushdb()
     for check in checks:
         _REDIS_SERVER.rpush("checks", check['id'])
         _REDIS_SERVER.set("check:%s" % check['id'], check['name'])
-                
-    metrics_monitor.run(check['id'], check['name'], check['url'])    
+        check['brain'] = metrics_monitor.nupic_instance()
+
+
+    while True:    
+        sleep(1)
+        for check in checks: 
+            metrics_monitor.run(check['brain'], check['id'], check['name'], check['url'])                    
+            
