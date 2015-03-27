@@ -85,6 +85,7 @@ class Monitor(object):
                 self.update(model_input, True) # Post anomalies when online
 
             sleep(self.seconds_per_request)
+            
 
     def update(self, model_input, is_to_post):
         # Pass the input to the model
@@ -97,15 +98,26 @@ class Monitor(object):
         inference = result.inferences['multiStepPredictions']
 
         # Take the anomaly_score
-        anomaly_score = result.inferences['anomalyScore']
+        
+        # Get the preducted value for reporting                                                       
+        predicted = result.inferences['multiStepBestPredictions'][1]                                                       
+        
+        # anomaly_score = result.inferences['anomalyScore']
+        anomaly_score = 0.0
+        if predicted:
+           actual = model_input['value']
+           band = actual * 0.3
+           if abs(actual - predicted) > band:
+             anomaly_score = 1.0
+
+
+
 
         # Compute the Anomaly Likelihood
         likelihood = self.anomalyLikelihood.anomalyProbability(model_input['value'],
                                                                anomaly_score,
                                                                model_input['time'])
         
-        # Get the preducted value for reporting                                                       
-        predicted = result.inferences['multiStepBestPredictions'][1]                                                       
 
         # Get timestamp from datetime
         timestamp = calendar.timegm(model_input['time'].timetuple())
